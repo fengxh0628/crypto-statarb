@@ -1,0 +1,1 @@
+"""Trading signals and rules."""
