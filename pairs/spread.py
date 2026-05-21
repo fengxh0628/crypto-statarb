@@ -11,11 +11,7 @@ def compute_hedge_ratio(
     prices_b: pd.Series,
     use_log: bool = True,
 ) -> float:
-    """Estimate hedge ratio via OLS regression.
-
-    Regresses log(A) on log(B) to find β such that:
-        spread = log(A) - β * log(B)
-    """
+    """Estimate hedge ratio via OLS regression."""
     if use_log:
         y = np.log(prices_a.values)
         x = np.log(prices_b.values)
@@ -23,9 +19,19 @@ def compute_hedge_ratio(
         y = prices_a.values
         x = prices_b.values
 
+    # Remove NaN
+    mask = ~(np.isnan(y) | np.isnan(x))
+    y = y[mask]
+    x = x[mask]
+    if len(y) < 10:
+        return np.nan
+
     x_const = add_constant(x)
-    model = OLS(y, x_const).fit()
-    return model.params[1]  # β coefficient
+    try:
+        model = OLS(y, x_const).fit()
+        return model.params[1]
+    except Exception:
+        return np.nan
 
 
 def compute_spread(
@@ -70,9 +76,18 @@ def rolling_hedge_ratio(
     for i in range(window, n):
         y = a.iloc[i - window : i].values
         x = b.iloc[i - window : i].values
-        x_const = add_constant(x)
-        model = OLS(y, x_const).fit()
-        betas.iloc[i] = model.params[1]
+        # Remove NaN
+        mask = ~(np.isnan(y) | np.isnan(x))
+        y_clean = y[mask]
+        x_clean = x[mask]
+        if len(y_clean) < 10:
+            continue
+        x_const = add_constant(x_clean)
+        try:
+            model = OLS(y_clean, x_const).fit()
+            betas.iloc[i] = model.params[1]
+        except Exception:
+            pass
 
     return betas
 
@@ -113,11 +128,30 @@ def estimate_ou_params(spread: pd.Series) -> dict:
         Dict with keys: theta, mu, sigma, half_life, b (AR1 coeff)
     """
     spread_clean = spread.dropna()
+    if len(spread_clean) < 10:
+        return {
+            "theta": 0.0,
+            "mu": spread_clean.mean() if len(spread_clean) > 0 else 0.0,
+            "sigma": spread_clean.std() if len(spread_clean) > 0 else 0.0,
+            "half_life": np.inf,
+            "b": 0.0,
+            "stationary": False,
+        }
     y = spread_clean.iloc[1:].values
     x = spread_clean.iloc[:-1].values
 
     x_const = add_constant(x)
-    model = OLS(y, x_const).fit()
+    try:
+        model = OLS(y, x_const).fit()
+    except Exception:
+        return {
+            "theta": 0.0,
+            "mu": spread_clean.mean(),
+            "sigma": spread_clean.std(),
+            "half_life": np.inf,
+            "b": 0.0,
+            "stationary": False,
+        }
 
     a = model.params[0]  # intercept
     b = model.params[1]  # AR(1) coefficient

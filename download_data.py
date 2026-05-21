@@ -22,7 +22,7 @@ Output:
 
 from pathlib import Path
 
-from cst.data.download import (
+from data.download import (
     download_ohlcv,
     download_funding_rate,
     get_all_perpetual_symbols,

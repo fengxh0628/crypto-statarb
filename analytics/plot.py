@@ -5,7 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-from ..engine.backtest import BacktestResult
+from engine.backtest import BacktestResult
 
 
 def plot_backtest(result: BacktestResult, title: str = "Pairs Trading Backtest") -> plt.Figure:

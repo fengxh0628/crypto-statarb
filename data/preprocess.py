@@ -8,20 +8,22 @@ def align_prices(
     dfs: dict[str, pd.DataFrame],
     freq: str = "1min",
     method: str = "ffill",
+    column: str = "close",
 ) -> pd.DataFrame:
-    """Align multiple price series to common time index.
+    """Align multiple price/volume series to common time index.
 
     Args:
-        dfs: Dict of {symbol: DataFrame with 'close' column}
+        dfs: Dict of {symbol: DataFrame}
         freq: Resample frequency
         method: Fill method for missing values ('ffill' or 'drop')
+        column: Column name to extract (default 'close', use 'volume' for volumes)
 
     Returns:
-        DataFrame with columns = symbol names, values = close prices
+        DataFrame with columns = symbol names
     """
     prices = {}
     for symbol, df in dfs.items():
-        s = df["close"].resample(freq).last()
+        s = df[column].resample(freq).last()
         prices[symbol] = s
 
     result = pd.DataFrame(prices)

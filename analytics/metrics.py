@@ -9,7 +9,7 @@ def compute_metrics(
     equity_curve: pd.Series,
     positions: pd.Series,
     trades: pd.Series,
-    bars_per_year: int = 525600,  # 分钟级：365*24*60
+    bars_per_year: int = 105120,  # 5分钟级：365*24*60/5
 ) -> dict:
     """Compute comprehensive performance metrics.
 
@@ -29,7 +29,11 @@ def compute_metrics(
     # 基本收益
     total_return = equity_curve.iloc[-1] - 1.0
     ann_factor = bars_per_year / n_bars if n_bars > 0 else 1
-    ann_return = (1 + total_return) ** ann_factor - 1
+    # Handle negative total return (can't raise negative to fractional power)
+    if total_return > -1:
+        ann_return = (1 + total_return) ** ann_factor - 1
+    else:
+        ann_return = -1.0  # Cap at -100%
 
     # 波动率
     ann_vol = pnl_clean.std() * np.sqrt(bars_per_year)

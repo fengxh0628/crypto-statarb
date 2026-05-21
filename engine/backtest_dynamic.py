@@ -7,10 +7,10 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from ..config import BacktestConfig
-from ..pairs.fast_adf import batch_adf, batch_cointegration_test
-from ..pairs.spread import compute_hedge_ratio, compute_spread, estimate_ou_params
-from ..strategy.signals import compute_zscore
+from config import BacktestConfig
+from pairs.fast_adf import batch_adf, batch_cointegration_test
+from pairs.spread import compute_hedge_ratio, compute_spread, estimate_ou_params
+from strategy.signals import compute_zscore
 
 
 @dataclass
@@ -37,6 +37,7 @@ class ActivePosition:
     entry_zscore: float
     hedge_ratio: float
     cumulative_pnl: float = 0.0
+    position_size: float = 0.10  # 动态仓位大小
 
 
 @dataclass
@@ -90,35 +91,61 @@ class _SignalCache:
         window = self.config.hedge_ratio_window
         n = self.n_bars
 
-        # Rolling hedge ratio: cov(a,b) / var(b)
+        # Pure numpy rolling hedge ratio: cov(a,b) / var(b)
+        # Uses cumulative sums for O(n) computation
         hr = np.full(n, np.nan)
         spread = np.full(n, np.nan)
 
-        for t in range(window, n):
-            seg_a = log_a[t - window:t]
-            seg_b = log_b[t - window:t]
+        if n > window:
+            # Shift by 1 so window at t covers [t-window, t)
+            a = np.empty(n)
+            b = np.empty(n)
+            a[1:] = log_a[:-1]
+            b[1:] = log_b[:-1]
+            a[0] = 0.0  # Will be excluded by window cutoff
+            b[0] = 0.0
 
-            # 跳过有NaN的窗口
-            if np.any(np.isnan(seg_a)) or np.any(np.isnan(seg_b)):
-                continue
+            # Rolling sums using cumsum
+            def rolling_sum(x, w):
+                cs = np.cumsum(x)
+                result = np.empty(n)
+                result[:w] = np.nan
+                result[w:] = cs[w:] - cs[:-w]
+                return result
 
-            cov = np.cov(seg_a, seg_b)[0, 1]
-            var_b = np.var(seg_b, ddof=1)
-            if var_b > 0:
-                hr[t] = cov / var_b
-                spread[t] = log_a[t] - hr[t] * log_b[t]
+            sum_a = rolling_sum(a, window)
+            sum_b = rolling_sum(b, window)
+            sum_ab = rolling_sum(a * b, window)
+            sum_b2 = rolling_sum(b * b, window)
 
-        # Z-score
+            # cov(a,b) = E[ab] - E[a]E[b], var(b) = E[b^2] - E[b]^2
+            inv_w = 1.0 / window
+            inv_ddof = 1.0 / (window - 1)
+
+            cov = (sum_ab - sum_a * sum_b * inv_w) * inv_ddof
+            var_b = (sum_b2 - sum_b * sum_b * inv_w) * inv_ddof
+
+            valid = var_b > 0
+            hr = np.where(valid, cov / var_b, np.nan)
+            # First window element includes artificial 0 at index 0, set to NaN
+            hr[window] = np.nan
+            spread = np.where(~np.isnan(hr), log_a - hr * log_b, np.nan)
+
+        # Vectorized z-score
         zw = self.config.zscore_window
         zscore = np.full(n, np.nan)
-        for t in range(window + zw, n):
-            seg = spread[t - zw:t]
-            valid = seg[~np.isnan(seg)]
-            if len(valid) >= zw // 2:
-                mu = valid.mean()
-                std = valid.std()
-                if std > 0:
-                    zscore[t] = (spread[t] - mu) / std
+
+        if n > window + zw:
+            sp = pd.Series(spread)
+            rolling_mean = sp.rolling(zw, min_periods=zw // 2).mean()
+            rolling_std = sp.rolling(zw, min_periods=zw // 2).std()
+
+            valid_z = ~np.isnan(spread) & (rolling_std.values > 0)
+            zscore = np.where(
+                valid_z,
+                (spread - rolling_mean.values) / rolling_std.values,
+                np.nan,
+            )
 
         self._cache[pair] = {"hr": hr, "spread": spread, "zscore": zscore}
 
@@ -274,16 +301,22 @@ def run_dynamic_backtest(
     active_count = np.zeros(n_bars, dtype=int)
     pair_monthly_pnl = {}
 
+    # 手续费统计
+    total_fees = 0.0
+    total_funding = 0.0
+    total_gross_pnl = 0.0
+
     start_bar = config.coint_lookback
     fee_rate = (config.taker_fee + config.slippage_bps / 10000.0) * 2 * config.leverage
 
     print(f"  Running from bar {start_bar} to {n_bars}...")
     last_progress = 0
+    equity = 1.0  # Track equity for early exit
     for t in range(start_bar, n_bars):
         # 进度提示
         progress = (t - start_bar) * 100 // (n_bars - start_bar)
-        if progress >= last_progress + 10:
-            print(f"    {progress}% ({t}/{n_bars})")
+        if progress >= last_progress + 5:
+            print(f"    {progress}% ({t}/{n_bars})", end="\r")
             last_progress = progress
 
         # --- 1. 定期重新扫描协整 ---
@@ -349,9 +382,14 @@ def run_dynamic_backtest(
                     side = +1
 
                 if side != 0:
+                    # 动态仓位：根据信号强度调整
+                    signal_strength = min(abs(z) / config.entry_threshold, 2.0)
+                    dynamic_size = config.position_size * signal_strength
+
                     active_positions[pair] = ActivePosition(
                         pair=pair, side=side, entry_bar=t,
                         entry_zscore=z, hedge_ratio=hr,
+                        position_size=dynamic_size,
                     )
                     trades.append(TradeRecord(
                         pair=pair, side=side, action="open",
@@ -369,7 +407,9 @@ def run_dynamic_backtest(
                 hr = pos.hedge_ratio
 
             ret_a, ret_b = sig_cache.get_pair_return(pair, t)
-            pair_ret = (ret_a - hr * ret_b) * pos.side * config.leverage
+            # 使用动态仓位
+            pos_size = getattr(pos, 'position_size', config.position_size)
+            pair_ret = (ret_a - hr * ret_b) * pos.side * config.leverage * pos_size
             bar_pnl += pair_ret
             pos.cumulative_pnl += pair_ret
 
@@ -385,26 +425,50 @@ def run_dynamic_backtest(
                 n_new_trades += 1
 
         # 交易成本
-        bar_pnl -= (n_new_trades + n_closes_this_bar) * fee_rate
+        bar_fees = (n_new_trades + n_closes_this_bar) * fee_rate * config.position_size
+        bar_pnl -= bar_fees
+        total_fees += bar_fees
 
         # Funding rate
+        bar_funding = 0.0
         if config.funding_interval_bars > 0 and t % config.funding_interval_bars == 0:
             n_active = len(active_positions)
             if n_active > 0:
-                bar_pnl -= config.funding_rate * 2 * n_active * config.leverage
+                bar_funding = config.funding_rate * 2 * n_active * config.leverage * config.position_size
+                bar_pnl -= bar_funding
+                total_funding += bar_funding
+
+        total_gross_pnl += bar_pnl + bar_fees + bar_funding
 
         portfolio_pnl[t] = bar_pnl
         active_count[t] = len(active_positions)
+        equity += bar_pnl
+        if equity <= 0:
+            # 爆仓，提前结束
+            print(f"\n    Liquidation at bar {t} ({index[t]})")
+            break
 
     # --- 构建结果 ---
+    print()  # Newline after progress
     print("  Building results...")
     pnl_series = pd.Series(portfolio_pnl, index=index)
     equity_curve = 1.0 + pnl_series.cumsum()
+    # Floor equity at 0 (realistic: liquidation before negative equity)
+    equity_curve = equity_curve.clip(lower=0)
+
+    # 打印手续费分解
+    net_pnl = total_gross_pnl - total_fees - total_funding
+    print(f"\n  === Cost Breakdown ===")
+    print(f"  Gross PnL:      {total_gross_pnl:+.4f} ({total_gross_pnl*100:+.2f}%)")
+    print(f"  Trading Fees:   -{total_fees:.4f} (-{total_fees*100:.2f}%)")
+    print(f"  Funding Rate:   -{total_funding:.4f} (-{total_funding*100:.2f}%)")
+    print(f"  Net PnL:        {net_pnl:+.4f} ({net_pnl*100:+.2f}%)")
+    print(f"  ======================\n")
     active_series = pd.Series(active_count, index=index)
 
     monthly_returns = _build_monthly_table(pnl_series, pair_monthly_pnl, index)
 
-    from ..analytics.metrics import compute_metrics
+    from analytics.metrics import compute_metrics
     total_metrics = compute_metrics(
         pnl_series, equity_curve,
         pd.Series(active_count, index=index),

@@ -5,7 +5,7 @@ using batched linear algebra (numpy BLAS). ~50-100x faster than
 statsmodels adfuller for large batches.
 
 Usage:
-    from cst.pairs.fast_adf import batch_adf, fast_adf_single
+    from pairs.fast_adf import batch_adf, fast_adf_single
 
     # Single series
     t_stat = fast_adf_single(spread_series, lags=1)
@@ -225,9 +225,13 @@ def batch_cointegration_test(
 
         # OLS: log_a = α + β * log_b
         X = np.column_stack([np.ones(n_samples), log_b])
-        beta = np.linalg.lstsq(X, log_a, rcond=None)[0]
-        hedge_ratios[idx] = beta[1]
-        spreads[idx] = log_a - beta[1] * log_b
+        try:
+            beta = np.linalg.lstsq(X, log_a, rcond=None)[0]
+            hedge_ratios[idx] = beta[1]
+            spreads[idx] = log_a - beta[1] * log_b
+        except Exception:
+            hedge_ratios[idx] = np.nan
+            spreads[idx] = np.nan
 
     # 批量 ADF
     t_stats = batch_adf(spreads, lags=lags)

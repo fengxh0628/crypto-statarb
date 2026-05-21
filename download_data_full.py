@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import datetime
 from binance_historical_data import BinanceDataDumper
 
@@ -6,11 +7,22 @@ from binance_historical_data import BinanceDataDumper
 # asset_class: 'um' 代表U本位永续合约 (USDⓈ-M Futures)
 # data_type: 'klines' 代表K线数据
 # data_frequency: '5m' 就是我们需要的5分钟粒度
+# data_dumper = BinanceDataDumper(
+#     path_dir_where_to_dump="./binance_data", 
+#     asset_class="um",            
+#     data_type="klines",          
+#     data_frequency="5m",         
+# )
+
+from binance_historical_data import BinanceDataDumper
+
+# 下载U本位永续合约的资金费率数据
 data_dumper = BinanceDataDumper(
-    path_dir_where_to_dump="./binance_data", 
-    asset_class="um",            
-    data_type="klines",          
-    data_frequency="5m",         
+    path_dir_where_to_dump="./binance_data",
+    asset_class="um",                # U本位永续合约
+    data_type="premiumIndexKlines",        # 关键改动：指定下载资金费率
+    data_frequency="8h",
+    # data_type也可以设为 "premiumIndexKlines" 获取更精细的预测费率数据[citation:1][citation:7]
 )
 
 # 2. 执行下载 (核心操作！)

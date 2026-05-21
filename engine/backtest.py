@@ -6,11 +6,11 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 
-from ..config import BacktestConfig
-from ..engine.costs import compute_simple_costs
-from ..pairs.spread import compute_hedge_ratio, compute_spread, estimate_ou_params, rolling_spread
-from ..strategy.rules import generate_positions
-from ..strategy.signals import compute_zscore
+from config import BacktestConfig
+from engine.costs import compute_simple_costs
+from pairs.spread import compute_hedge_ratio, compute_spread, estimate_ou_params, rolling_spread
+from strategy.rules import generate_positions
+from strategy.signals import compute_zscore
 
 
 @dataclass

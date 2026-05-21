@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 
-from ..config import BacktestConfig
+from config import BacktestConfig
 
 
 def generate_positions(

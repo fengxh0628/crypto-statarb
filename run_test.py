@@ -1,12 +1,13 @@
+#!/usr/bin/env python3
 """Example: Dynamic pairs trading backtest with continuous monitoring."""
 
 import numpy as np
 import pandas as pd
 
-from cst.config import BacktestConfig
-from cst.engine.backtest_dynamic import run_dynamic_backtest
-from cst.analytics.metrics import print_metrics, print_monthly_returns
-from cst.analytics.plot import plot_backtest
+from config import BacktestConfig
+from engine.backtest_dynamic import run_dynamic_backtest
+from analytics.metrics import print_metrics, print_monthly_returns
+from analytics.plot import plot_backtest
 
 
 def generate_synthetic_universe(

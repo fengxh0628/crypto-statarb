@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import time
 from statsmodels.tsa.stattools import adfuller
-from cst.pairs.fast_adf import fast_adf_single, batch_adf
+from pairs.fast_adf import fast_adf_single, batch_adf
 
 rng = np.random.default_rng(42)
 n = 2000

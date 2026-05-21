@@ -36,3 +36,9 @@ class BacktestConfig:
     coint_recheck_bars: int = 288  # 全量重新扫描间隔（5min: 1天=288）
     coint_significance: float = 0.05  # 协整p-value阈值
     max_half_life: float = 200.0  # 最大半衰期（bars），超过则不选
+
+    # 过滤条件
+    vol_filter_window: int = 48  # 波动率过滤窗口
+    min_vol_percentile: float = 0.2  # 排除低波动率时段
+    trend_filter_window: int = 168  # 趋势过滤窗口
+    max_trend_threshold: float = 0.02  # 排除强趋势时段（绝对收益率）
